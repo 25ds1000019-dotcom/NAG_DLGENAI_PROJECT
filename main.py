@@ -7,7 +7,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 
 ALLOWED_ORIGIN = "https://dash-ujy8zs.example.com"
-EMAIL = "25ds1000019@study.ds.iitm.ac.in"
+EMAIL = "25ds1000019@ds.study.iitm.ac.in"
 
 app = FastAPI()
 
