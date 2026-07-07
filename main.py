@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 import yaml
 from dotenv import dotenv_values
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
@@ -37,6 +37,12 @@ RATE_LIMIT = 17
 RATE_WINDOW_SECONDS = 10
 IDEMPOTENT_ORDERS: dict[str, dict[str, Any]] = {}
 CLIENT_REQUESTS: dict[str, deque[float]] = {}
+PING_RATE_LIMIT = 8
+PING_CLIENT_REQUESTS: dict[str, deque[float]] = {}
+ALLOWED_CORS_ORIGINS = [
+    "https://app-p8opag.example.com",
+    "https://exam.sanand.workers.dev",
+]
 
 DEFAULTS = {
     "port": 8000,
@@ -58,7 +64,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_CORS_ORIGINS,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
@@ -71,7 +77,8 @@ class RequestHeadersMiddleware(BaseHTTPMiddleware):
         global HTTP_REQUESTS_TOTAL
 
         start = time.perf_counter()
-        request_id = str(uuid.uuid4())
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request.state.request_id = request_id
         status_code = 500
         level = "INFO"
 
@@ -103,6 +110,37 @@ class RequestHeadersMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(RequestHeadersMiddleware)
+
+
+def enforce_ping_rate_limit(
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+) -> str:
+    client_id = (x_client_id or "anonymous").strip() or "anonymous"
+    now = time.monotonic()
+    cutoff = now - RATE_WINDOW_SECONDS
+
+    with STATE_LOCK:
+        requests = PING_CLIENT_REQUESTS.setdefault(client_id, deque())
+        while requests and requests[0] <= cutoff:
+            requests.popleft()
+        if len(requests) >= PING_RATE_LIMIT:
+            retry_after = max(1, math.ceil(requests[0] + RATE_WINDOW_SECONDS - now))
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit exceeded",
+                headers={"Retry-After": str(retry_after)},
+            )
+        requests.append(now)
+
+    return client_id
+
+
+@app.get("/ping")
+async def ping(
+    request: Request,
+    _client_id: str = Depends(enforce_ping_rate_limit),
+):
+    return {"email": EMAIL, "request_id": request.state.request_id}
 
 
 def enforce_order_rate_limit(
