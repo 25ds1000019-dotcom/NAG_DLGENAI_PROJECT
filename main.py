@@ -6,9 +6,12 @@ from typing import Any
 
 import yaml
 from dotenv import dotenv_values
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from token_verify import TokenVerificationError, verify_jwt
 
 
 EMAIL = "25ds1000019@ds.study.iitm.ac.in"
@@ -36,7 +39,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["GET", "OPTIONS"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -52,6 +55,27 @@ class RequestHeadersMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(RequestHeadersMiddleware)
+
+
+@app.post("/verify")
+async def verify_token(payload: Any = Body(...)) -> JSONResponse:
+    token = payload.get("token") if isinstance(payload, dict) else None
+    if not isinstance(token, str) or not token:
+        return JSONResponse(status_code=401, content={"valid": False})
+
+    try:
+        verified = verify_jwt(token)
+    except TokenVerificationError:
+        return JSONResponse(status_code=401, content={"valid": False})
+
+    return JSONResponse(
+        content={
+            "valid": True,
+            "email": verified.email,
+            "sub": verified.sub,
+            "aud": verified.aud,
+        }
+    )
 
 
 def coerce_value(key: str, value: Any) -> Any:
