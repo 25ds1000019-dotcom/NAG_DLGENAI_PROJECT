@@ -1,12 +1,13 @@
 import time
 import uuid
 import os
+import secrets
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 from dotenv import dotenv_values
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -15,6 +16,9 @@ from token_verify import TokenVerificationError, verify_jwt
 
 
 EMAIL = "25ds1000019@ds.study.iitm.ac.in"
+ANALYTICS_API_KEY = os.getenv(
+    "ANALYTICS_API_KEY", "ak_6zj0h4yyq5kk9y4b1dh46gsu"
+)
 BASE_DIR = Path(__file__).resolve().parent
 
 DEFAULTS = {
@@ -55,6 +59,45 @@ class RequestHeadersMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(RequestHeadersMiddleware)
+
+
+@app.post("/analytics")
+async def analytics(
+    payload: Any = Body(...),
+    api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+):
+    if api_key is None or not secrets.compare_digest(api_key, ANALYTICS_API_KEY):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    events = payload.get("events") if isinstance(payload, dict) else None
+    if not isinstance(events, list):
+        raise HTTPException(status_code=400, detail="events must be a list")
+
+    users: set[Any] = set()
+    positive_totals: dict[Any, float] = {}
+    revenue = 0.0
+
+    for event in events:
+        if not isinstance(event, dict) or "user" not in event:
+            raise HTTPException(status_code=400, detail="Invalid event")
+        user = event["user"]
+        amount = event.get("amount", 0)
+        if not isinstance(user, str) or not isinstance(amount, (int, float)):
+            raise HTTPException(status_code=400, detail="Invalid event")
+
+        users.add(user)
+        if amount > 0:
+            revenue += amount
+            positive_totals[user] = positive_totals.get(user, 0.0) + amount
+
+    top_user = max(positive_totals, key=positive_totals.get) if positive_totals else None
+    return {
+        "email": EMAIL,
+        "total_events": len(events),
+        "unique_users": len(users),
+        "revenue": revenue,
+        "top_user": top_user,
+    }
 
 
 @app.post("/verify")
