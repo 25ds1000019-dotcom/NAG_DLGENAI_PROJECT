@@ -5,6 +5,8 @@ import secrets
 import json
 import threading
 import re
+import base64
+import math
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,7 +14,7 @@ from typing import Any, Optional
 
 import yaml
 from dotenv import dotenv_values
-from fastapi import Body, FastAPI, Header, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
@@ -30,6 +32,11 @@ START_TIME = time.monotonic()
 STATE_LOCK = threading.Lock()
 HTTP_REQUESTS_TOTAL = 0
 RECENT_LOGS = deque(maxlen=1000)
+TOTAL_ORDERS = 57
+RATE_LIMIT = 17
+RATE_WINDOW_SECONDS = 10
+IDEMPOTENT_ORDERS: dict[str, dict[str, Any]] = {}
+CLIENT_REQUESTS: dict[str, deque[float]] = {}
 
 DEFAULTS = {
     "port": 8000,
@@ -55,6 +62,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["Retry-After"],
 )
 
 
@@ -95,6 +103,90 @@ class RequestHeadersMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(RequestHeadersMiddleware)
+
+
+def enforce_order_rate_limit(
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+) -> str:
+    client_id = (x_client_id or "anonymous").strip() or "anonymous"
+    now = time.monotonic()
+    cutoff = now - RATE_WINDOW_SECONDS
+
+    with STATE_LOCK:
+        requests = CLIENT_REQUESTS.setdefault(client_id, deque())
+        while requests and requests[0] <= cutoff:
+            requests.popleft()
+
+        if len(requests) >= RATE_LIMIT:
+            retry_after = max(1, math.ceil(requests[0] + RATE_WINDOW_SECONDS - now))
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit exceeded",
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        requests.append(now)
+
+    return client_id
+
+
+def encode_order_cursor(offset: int) -> str:
+    value = f"orders:{offset}".encode("ascii")
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def decode_order_cursor(cursor: Optional[str]) -> int:
+    if cursor is None:
+        return 0
+
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        value = base64.urlsafe_b64decode(padded.encode("ascii")).decode("ascii")
+        prefix, raw_offset = value.split(":", 1)
+        offset = int(raw_offset)
+    except (ValueError, UnicodeError, base64.binascii.Error) as exc:
+        raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+
+    if prefix != "orders" or not 0 <= offset <= TOTAL_ORDERS:
+        raise HTTPException(status_code=400, detail="Invalid cursor")
+    return offset
+
+
+@app.post("/orders", status_code=201)
+async def create_order(
+    payload: Optional[dict[str, Any]] = Body(default=None),
+    idempotency_key: str = Header(alias="Idempotency-Key"),
+    _client_id: str = Depends(enforce_order_rate_limit),
+):
+    key = idempotency_key.strip()
+    if not key or len(key) > 256:
+        raise HTTPException(status_code=400, detail="Invalid Idempotency-Key")
+
+    with STATE_LOCK:
+        existing = IDEMPOTENT_ORDERS.get(key)
+        if existing is not None:
+            return existing
+
+        order = {
+            **(payload or {}),
+            "id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{EMAIL}:orders:{key}")),
+        }
+        IDEMPOTENT_ORDERS[key] = order
+        return order
+
+
+@app.get("/orders")
+async def list_orders(
+    limit: int = Query(10, ge=1),
+    cursor: Optional[str] = Query(default=None),
+    _client_id: str = Depends(enforce_order_rate_limit),
+):
+    offset = decode_order_cursor(cursor)
+    end = min(offset + limit, TOTAL_ORDERS)
+    return {
+        "items": [{"id": order_id} for order_id in range(offset + 1, end + 1)],
+        "next_cursor": encode_order_cursor(end) if end < TOTAL_ORDERS else None,
+    }
 
 
 class InvoiceRequest(BaseModel):
