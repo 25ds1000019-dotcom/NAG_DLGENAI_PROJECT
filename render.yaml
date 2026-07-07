@@ -5,3 +5,10 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     plan: free
+    envVars:
+      - key: APP_ENV
+        value: development
+      - key: APP_DEBUG
+        value: "true"
+      - key: APP_LOG_LEVEL
+        value: error
