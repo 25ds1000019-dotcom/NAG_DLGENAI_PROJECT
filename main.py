@@ -2,6 +2,10 @@ import time
 import uuid
 import os
 import secrets
+import json
+import threading
+from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -9,7 +13,7 @@ import yaml
 from dotenv import dotenv_values
 from fastapi import Body, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from token_verify import TokenVerificationError, verify_jwt
@@ -20,6 +24,10 @@ ANALYTICS_API_KEY = os.getenv(
     "ANALYTICS_API_KEY", "ak_6zj0h4yyq5kk9y4b1dh46gsu"
 )
 BASE_DIR = Path(__file__).resolve().parent
+START_TIME = time.monotonic()
+STATE_LOCK = threading.Lock()
+HTTP_REQUESTS_TOTAL = 0
+RECENT_LOGS = deque(maxlen=1000)
 
 DEFAULTS = {
     "port": 8000,
@@ -50,15 +58,71 @@ app.add_middleware(
 
 class RequestHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
+        global HTTP_REQUESTS_TOTAL
+
         start = time.perf_counter()
-        response = await call_next(request)
-        elapsed = time.perf_counter() - start
-        response.headers["X-Request-ID"] = str(uuid.uuid4())
-        response.headers["X-Process-Time"] = f"{elapsed:.6f}"
-        return response
+        request_id = str(uuid.uuid4())
+        status_code = 500
+        level = "INFO"
+
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            if status_code >= 500:
+                level = "ERROR"
+            elif status_code >= 400:
+                level = "WARNING"
+            response.headers["X-Request-ID"] = request_id
+            response.headers["X-Process-Time"] = f"{time.perf_counter() - start:.6f}"
+            return response
+        except Exception:
+            level = "ERROR"
+            raise
+        finally:
+            entry = {
+                "level": level,
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "path": request.url.path,
+                "request_id": request_id,
+                "status_code": status_code,
+            }
+            with STATE_LOCK:
+                HTTP_REQUESTS_TOTAL += 1
+                RECENT_LOGS.append(entry)
+            print(json.dumps(entry, separators=(",", ":")), flush=True)
 
 
 app.add_middleware(RequestHeadersMiddleware)
+
+
+@app.get("/work")
+async def work(n: int = Query(..., ge=0, le=1_000_000)):
+    for unit in range(n):
+        unit * unit
+    return {"email": EMAIL, "done": n}
+
+
+@app.get("/metrics")
+async def metrics():
+    with STATE_LOCK:
+        count = HTTP_REQUESTS_TOTAL
+    content = (
+        "# HELP http_requests_total Total HTTP requests.\n"
+        "# TYPE http_requests_total counter\n"
+        f"http_requests_total {float(count)}\n"
+    )
+    return Response(content=content, media_type="text/plain; version=0.0.4")
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok", "uptime_s": max(0.0, time.monotonic() - START_TIME)}
+
+
+@app.get("/logs/tail")
+async def logs_tail(limit: int = Query(100, ge=1, le=1000)):
+    with STATE_LOCK:
+        return list(RECENT_LOGS)[-limit:]
 
 
 @app.post("/analytics")
