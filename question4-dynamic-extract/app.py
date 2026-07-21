@@ -19,7 +19,8 @@ def dt(v):
 def cast(v,k):
  if v is None or v=="":return None
  try:
-  if k=="string":return str(v).strip().rstrip(".,;:") or None
+  if k=="string":
+   s=str(v).strip();s=re.split(r"\.\s+(?=[A-Z][A-Za-z0-9 _/-]{0,30}\s*[:#])",s,maxsplit=1)[0];return s.rstrip(".,;: ") or None
   if k in {"integer","float"}:
    m=re.search(r"-?(?:\d{1,3}(?:,\d{2,3})+|\d+)(?:\.\d+)?",str(v));x=float(m.group(0).replace(",","")) if m else None;return int(x) if x is not None and k=="integer" else x
   if k=="boolean":
@@ -32,7 +33,7 @@ def cast(v,k):
 def val(t,k,typ):
  p=re.escape(k).replace("_",r"[ _-]?");m=re.search(rf"(?im)\b{p}\b\s*[:#-]\s*([^\n]+)",t)
  if m:return m.group(1).strip()
- a={"order_id":r"order\s*#?\s*([A-Za-z0-9/_-]+)","reference":r"(?:reference|ref|transaction|txn)\s*(?:no\.?)?\s*[:#-]?\s*([A-Za-z0-9/_-]+)","event_time":r"\bat\s+(\d{1,2}:\d{2})","root_cause":r"root\s*cause\s*:\s*([^\n.;]+)","city":r"shipped\s+to\s*:\s*([^\n.;]+)","store":r"from\s+([^\n.;]+)","customer_name":r"^\s*([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)?)\s+(?:bought|purchased|ordered)","student":r"(?:student|name)\s*:\s*([^\n.;]+)","property_type":r"(?:property\s*type|property)\s*:\s*([^\n.;]+)","from_bank":r"(?:from\s*bank|from|debited\s*from|source\s*bank)\s*[:#-]?\s*([A-Za-z][A-Za-z .&-]*?)(?=\s+(?:acct|account|a/c)\b|[.,;\n]|$)","to_bank":r"(?:to\s*bank|to|credited\s*to|destination\s*bank)\s*[:#-]?\s*([A-Za-z][A-Za-z .&-]*?)(?=\s+(?:acct|account|a/c)\b|[.,;\n]|$)"}
+ a={"order_id":r"order\s*#?\s*([A-Za-z0-9/_-]+)","reference":r"(?:reference|ref|transaction|txn)\s*(?:no\.?)?\s*[:#-]?\s*([A-Za-z0-9/_-]+)","event_time":r"\bat\s+(\d{1,2}:\d{2})","root_cause":r"root\s*cause\s*:\s*([^\n.;]+)","city":r"shipped\s+to\s*:\s*([^\n.;]+)","store":r"from\s+([^\n.;]+)","customer_name":r"^\s*([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)?)\s+(?:bought|purchased|ordered)","student":r"(?:student|name)\s*:\s*([^\n]+)","property_type":r"(?:property\s*type|property)\s*:\s*([^\n.;]+)","from_bank":r"(?:from\s*bank|from|debited\s*from|source\s*bank)\s*[:#-]?\s*([A-Za-z][A-Za-z .&-]*?)(?=\s+(?:acct|account|a/c)\b|[.,;\n]|$)","to_bank":r"(?:to\s*bank|to|credited\s*to|destination\s*bank)\s*[:#-]?\s*([A-Za-z][A-Za-z .&-]*?)(?=\s+(?:acct|account|a/c)\b|[.,;\n]|$)"}
  if k in a:
   m=re.search(a[k],t,re.I|re.M)
   if m:return m.group(1).strip()
