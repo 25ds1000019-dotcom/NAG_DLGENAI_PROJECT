@@ -13,29 +13,18 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
-
 app = FastAPI(title="NovaCorp Image QA API")
 logger = logging.getLogger(__name__)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
 class ImageQuestion(BaseModel):
     image_base64: str = Field(min_length=1)
     question: str = Field(min_length=1, max_length=2_000)
 
-
 class ImageAnswer(BaseModel):
     answer: str
 
-
 def decode_image(value: str) -> tuple[bytes, str]:
-    """Decode standard or data-URL base64 and identify a supported image type."""
     try:
         image = base64.b64decode(value.split(",", 1)[-1].strip(), validate=True)
     except (binascii.Error, ValueError) as error:
@@ -52,46 +41,28 @@ def decode_image(value: str) -> tuple[bytes, str]:
         return image, "image/webp"
     raise HTTPException(422, "image must be PNG, JPEG, GIF, or WebP")
 
-
 @app.post("/answer-image", response_model=ImageAnswer)
 def answer_image(request: ImageQuestion) -> ImageAnswer:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise HTTPException(503, "GEMINI_API_KEY is not configured")
-
     image, mime_type = decode_image(request.image_base64)
-    prompt = (
-        "Read the image and answer the question accurately. Return only the answer: "
-        "no explanation, label, unit, or currency symbol. For a numeric answer, "
-        "return only the displayed number.\nQuestion: " + request.question
-    )
+    prompt = ("Read the image and answer the question accurately. Return only the answer: "
+              "no explanation, label, unit, or currency symbol. For a numeric answer, return only the displayed number.\nQuestion: " + request.question)
     try:
-        client = genai.Client(
-            api_key=api_key,
-            http_options=types.HttpOptions(timeout=60_000),
-        )
+        client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=60_000))
         response = client.models.generate_content(
-            model=os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash"),
-            contents=[
-                types.Content(
-                    role="user",
-                    parts=[
-                        types.Part.from_bytes(data=image, mime_type=mime_type),
-                        types.Part.from_text(text=prompt),
-                    ],
-                )
-            ],
+            model="gemini-3.1-flash-lite",
+            contents=[types.Content(role="user", parts=[types.Part.from_bytes(data=image, mime_type=mime_type), types.Part.from_text(text=prompt)])],
         )
     except Exception as error:
         logger.exception("Gemini image analysis failed: %s", error)
         raise HTTPException(502, "Gemini image analysis failed") from error
-
     answer = (response.text or "").strip().strip('"')
     if not answer:
         logger.error("Gemini returned no answer text; candidates=%s", len(response.candidates or []))
         raise HTTPException(502, "Gemini returned an empty answer")
     return ImageAnswer(answer=answer)
-
 
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
