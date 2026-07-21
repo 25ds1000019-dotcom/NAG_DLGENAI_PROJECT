@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import logging
 import os
 
 from fastapi import FastAPI, HTTPException
@@ -14,6 +15,7 @@ from pydantic import BaseModel, Field
 
 
 app = FastAPI(title="NovaCorp Image QA API")
+logger = logging.getLogger(__name__)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -58,6 +60,11 @@ def answer_image(request: ImageQuestion) -> ImageAnswer:
         raise HTTPException(503, "GEMINI_API_KEY is not configured")
 
     image, mime_type = decode_image(request.image_base64)
+    prompt = (
+        "Read the image and answer the question accurately. Return only the answer: "
+        "no explanation, label, unit, or currency symbol. For a numeric answer, "
+        "return only the displayed number.\nQuestion: " + request.question
+    )
     try:
         client = genai.Client(
             api_key=api_key,
@@ -66,17 +73,22 @@ def answer_image(request: ImageQuestion) -> ImageAnswer:
         response = client.models.generate_content(
             model=os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash"),
             contents=[
-                types.Part.from_bytes(data=image, mime_type=mime_type),
-                "Read the image and answer the question accurately. Return only the answer: "
-                "no explanation, label, unit, or currency symbol. For a numeric answer, "
-                "return only the displayed number.\nQuestion: " + request.question,
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_bytes(data=image, mime_type=mime_type),
+                        types.Part.from_text(text=prompt),
+                    ],
+                )
             ],
         )
     except Exception as error:
+        logger.exception("Gemini image analysis failed: %s", error)
         raise HTTPException(502, "Gemini image analysis failed") from error
 
     answer = (response.text or "").strip().strip('"')
     if not answer:
+        logger.error("Gemini returned no answer text; candidates=%s", len(response.candidates or []))
         raise HTTPException(502, "Gemini returned an empty answer")
     return ImageAnswer(answer=answer)
 
