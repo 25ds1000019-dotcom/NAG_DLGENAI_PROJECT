@@ -6,12 +6,16 @@ from google.genai import types
 from pydantic import BaseModel
 
 
+
+
 KEYS=("rows","columns","mean","std","variance","min","max","median","mode","range","allowed_values","value_range","correlation")
 app=FastAPI()
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_methods=["*"],allow_headers=["*"])
 class Request(BaseModel):
  audio_id:str
  audio_base64:str
+
+
 
 
 def empty():
@@ -34,5 +38,3 @@ def decode(value):
  try:a=base64.b64decode(value.split(",",1)[-1].strip(),validate=True)
  except (binascii.Error,ValueError):raise HTTPException(422,"invalid audio_base64")
  if not a:raise HTTPException(422,"empty audio")
- if a.startswith(b"RIFF"):return a,"audio/wav"
- if a.startswith(b"OggS"):return a,"audio/ogg"
