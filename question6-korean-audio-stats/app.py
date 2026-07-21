@@ -18,7 +18,8 @@ def decode(v):
  if a.startswith(b"fLaC"):return a,"audio/flac"
  if a.startswith(b"ID3") or a[:2]==b"\xff\xfb":return a,"audio/mpeg"
  if a.startswith(b"\x1aE\xdf\xa3"):return a,"audio/webm"
- return a,"audio/wadef clean(k):return re.sub(r"\s+","",str(k))
+ return a,"audio/wav"
+def clean(k):return re.sub(r"\s+","",str(k))
 def rename(d):return {clean(k):v for k,v in d.items()} if isinstance(d,dict) else {}
 def norm(x):
  d=empty();r={k:x.get(k,d[k]) for k in K};found=r["allowed_values"] if isinstance(r["allowed_values"],dict) else {};r["rows"]=int(r["rows"]) if isinstance(r["rows"],(int,float,str)) else 0;r["correlation"]=r["correlation"] if isinstance(r["correlation"],list) else []
@@ -31,13 +32,7 @@ def norm(x):
  r["columns"]=cols;r["allowed_values"]={}
  return r
 
+
 async def run(r):
  key=os.getenv("GEMINI_API_KEY")
  if not key:raise HTTPException(503,detail="GEMINI_API_KEY is not configured")
- audio,mime=decode(r.audio_base64)
- prompt="""The audio is Korean speech describing a numeric table. Transcribe every row and compute exact statistics. Return JSON only with exactly: rows, columns, mean, std, variance, min, max, median, mode, range, allowed_values, value_range, correlation. Spoken score fields such as 점수 1 and 점수 2 are numeric column names: use exactly 점수1 and 점수2, and use those names in every statistic mapping. allowed_values must be {}. Use pandas sample std/variance (ddof=1), range=max-min, JSON numeric values, no commentary."""
- try:
-  c=genai.Client(api_key=key);out=c.models.generate_content(model="gemini-3.1-flash-lite",contents=[types.Part.from_bytes(data=audio,mime_type=mime),prompt],config=types.GenerateContentConfig(response_mime_type="application/json"));return norm(json.loads(out.text or "{}"))
- except Exception as e:raise HTTPException(502,detail="Audio analysis failed") from e
-@app.post("/")
-async def root(r:R):return await run(r)
