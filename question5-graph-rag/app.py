@@ -41,15 +41,15 @@ def extract_graph(req: ExtractRequest) -> dict[str, list[dict[str,str]]]:
     text=req.text
     rels=[]
     # Subject first: LangChain was created by Harrison Chase.
-    for m in re.finditer(CAP + r"\s+(?:was|is)\s+(?:created|founded|developed|authored)\s+by\s+" + CAP, text, re.I):
+    for m in re.finditer(CAP + r"\s+(?:was|is)\s+(?:(?:an?|the)\s+)?(?:(?:AI|software)\s+)?(?:framework|product|organization|company)?\s*(?:created|founded|developed|authored)\s+by\s+" + CAP, text):
         subject, verb, obj=m.group(1), m.group(0).lower(), m.group(2)
         relation="FOUNDED" if "founded" in verb else "DEVELOPED" if "developed" in verb else "AUTHORED" if "authored" in verb else "CREATED"
         add_rel(rels,obj,subject,relation)
-    for m in re.finditer(CAP + r"\s+(?:created|founded|developed|authored)\s+" + CAP, text, re.I):
+    for m in re.finditer(CAP + r"\s+(?:created|founded|developed|authored)\s+" + CAP, text):
         source, verb, target=m.group(1),m.group(0).lower(),m.group(2)
         add_rel(rels,source,target,"FOUNDED" if "founded" in verb else "DEVELOPED" if "developed" in verb else "AUTHORED" if "authored" in verb else "CREATED")
-    for m in re.finditer(CAP + r"\s+(?:integrates?\s+with|was\s+integrated\s+into|integrated\s+into)\s+" + CAP, text, re.I): add_rel(rels,m.group(1),m.group(2),"INTEGRATED_INTO")
-    for m in re.finditer(CAP + r"\s+hired\s+" + CAP, text, re.I): add_rel(rels,m.group(1),m.group(2),"HIRED")
+    for m in re.finditer(CAP + r"\s+(?:integrates?\s+with|was\s+integrated\s+into|integrated\s+into)\s+" + CAP, text): add_rel(rels,m.group(1),m.group(2),"INTEGRATED_INTO")
+    for m in re.finditer(CAP + r"\s+hired\s+" + CAP, text): add_rel(rels,m.group(1),m.group(2),"HIRED")
     names=[]
     for rel in rels:
         for name in (rel['source'],rel['target']):
