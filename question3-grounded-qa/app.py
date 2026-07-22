@@ -8,11 +8,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-TOKEN_RE = re.compile(r"\b[a-z0-9]+\b", re.I)
-SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+TOKEN_RE = re.compile(r"[a-z0-9]+", re.I)
+SENTENCE_RE = re.compile(r"(?<=[.!?])s+")
 STOPWORDS = {"a", "an", "and", "are", "be", "by", "can", "do", "does", "for", "from", "how", "in", "is", "it", "of", "on", "the", "to", "was", "what", "when", "where", "which", "who", "why", "with"}
-YEAR_RE = re.compile(r"\b(?:1[5-9]\d{2}|20\d{2}|21\d{2})\b")
-NUMBER_RE = re.compile(r"\b\d+(?:\.\d+)?\b")
+YEAR_RE = re.compile(r"(?:1[5-9]d{2}|20d{2}|21d{2})")
+NUMBER_RE = re.compile(r"d+(?:.d+)?")
 
 
 class Chunk(BaseModel):
@@ -76,7 +76,7 @@ def choose_answer(question: str, chunks: list[Chunk]) -> tuple[str, list[str], f
     if numeric:
         if coverage < 0.25 or not (YEAR_RE.search(sentence) or NUMBER_RE.search(sentence)):
             return None
-    elif coverage < 0.50:
+    elif coverage <= 0.50:
         return None
     if question.lower().lstrip().startswith("who ") and not ({"invented", "created", "developed", "founded", "by"} & sentence_words):
         return None
@@ -89,6 +89,7 @@ def health() -> dict[str, bool]:
 
 
 @app.post("/answer")
+@app.post("/grounded-answer")
 @app.post("/")
 def answer(request: AnswerRequest) -> dict[str, Any]:
     if not request.question.strip() or not request.chunks:
@@ -97,4 +98,8 @@ def answer(request: AnswerRequest) -> dict[str, Any]:
     if selected is None:
         return unknown()
     answer_text, citations, confidence = selected
+    supplied_ids = {chunk.chunk_id for chunk in request.chunks}
+    citations = [chunk_id for chunk_id in citations if chunk_id in supplied_ids]
+    if not citations:
+        return unknown()
     return {"answer": answer_text, "citations": citations, "confidence": confidence, "answerable": True}
