@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: searchtech-vector-rerank
+    env: python
+    rootDir: question4-vector-search
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
