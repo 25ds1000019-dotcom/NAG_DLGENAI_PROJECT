@@ -49,6 +49,13 @@ def extract_graph(req: ExtractRequest) -> dict[str, list[dict[str,str]]]:
         source, verb, target=m.group(1),m.group(0).lower(),m.group(2)
         add_rel(rels,source,target,"FOUNDED" if "founded" in verb else "DEVELOPED" if "developed" in verb else "AUTHORED" if "authored" in verb else "CREATED")
     for m in re.finditer(CAP + r"\s+(?:integrates?\s+with|was\s+integrated\s+into|integrated\s+into)\s+" + CAP, text): add_rel(rels,m.group(1),m.group(2),"INTEGRATED_INTO")
+    # Handles coordinated clauses such as "LangChain was created by Harrison
+    # Chase and integrates with OpenAI", where the subject is omitted from
+    # the second clause.
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        m = re.search(CAP + r".{0,160}?\b(?:integrates?\s+with|integrated\s+into)\s+" + CAP, sentence)
+        if m:
+            add_rel(rels, m.group(1), m.group(2), "INTEGRATED_INTO")
     for m in re.finditer(CAP + r"\s+hired\s+" + CAP, text): add_rel(rels,m.group(1),m.group(2),"HIRED")
     names=[]
     for rel in rels:
