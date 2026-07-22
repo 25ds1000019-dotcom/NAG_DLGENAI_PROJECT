@@ -8,11 +8,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-TOKEN_RE = re.compile(r"[a-z0-9]+", re.I)
-SENTENCE_RE = re.compile(r"(?<=[.!?])s+")
+TOKEN_RE = re.compile(r"\b[a-z0-9]+\b", re.I)
+SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 STOPWORDS = {"a", "an", "and", "are", "be", "by", "can", "do", "does", "for", "from", "how", "in", "is", "it", "of", "on", "the", "to", "was", "what", "when", "where", "which", "who", "why", "with"}
-YEAR_RE = re.compile(r"(?:1[5-9]d{2}|20d{2}|21d{2})")
-NUMBER_RE = re.compile(r"d+(?:.d+)?")
+YEAR_RE = re.compile(r"\b(?:1[5-9]\d{2}|20\d{2}|21\d{2})\b")
+NUMBER_RE = re.compile(r"\b\d+(?:\.\d+)?\b")
 
 
 class Chunk(BaseModel):
@@ -55,6 +55,7 @@ def candidate_sentences(chunks: list[Chunk]) -> list[tuple[str, str]]:
 
 def choose_answer(question: str, chunks: list[Chunk]) -> tuple[str, list[str], float] | None:
     query, anchors = content_words(question), named_anchors(question)
+    requested_numbers = set(NUMBER_RE.findall(question))
     if not query:
         return None
     ranked = []
@@ -74,8 +75,19 @@ def choose_answer(question: str, chunks: list[Chunk]) -> tuple[str, list[str], f
     if not (query & sentence_words):
         return None
     if numeric:
-        if coverage < 0.25 or not (YEAR_RE.search(sentence) or NUMBER_RE.search(sentence)):
+        # Do not turn a conflicting premise into an answer.  For example, a
+        # context that says "released in 2017" cannot support a question that
+        # asks whether it was released in 2018.
+        sentence_numbers = set(NUMBER_RE.findall(sentence))
+        if (
+            coverage < 0.25
+            or not (YEAR_RE.search(sentence) or NUMBER_RE.search(sentence))
+            or not requested_numbers <= sentence_numbers
+        ):
             return None
+    # A partial lexical match is not enough for a grounded answer: it can
+    # select a chunk mentioning the entity without supporting the requested
+    # attribute (for example, a country but not its capital).
     elif coverage <= 0.50:
         return None
     if question.lower().lstrip().startswith("who ") and not ({"invented", "created", "developed", "founded", "by"} & sentence_words):
@@ -98,6 +110,7 @@ def answer(request: AnswerRequest) -> dict[str, Any]:
     if selected is None:
         return unknown()
     answer_text, citations, confidence = selected
+    # Defense in depth: never emit an ID that did not appear in this request.
     supplied_ids = {chunk.chunk_id for chunk in request.chunks}
     citations = [chunk_id for chunk_id in citations if chunk_id in supplied_ids]
     if not citations:
