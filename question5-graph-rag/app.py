@@ -56,13 +56,20 @@ def extract_graph(req: ExtractRequest) -> dict[str, list[dict[str,str]]]:
         m = re.search(CAP + r".{0,160}?\b(?:integrates?\s+with|integrated\s+into)\s+" + CAP, sentence)
         if m:
             add_rel(rels, m.group(1), m.group(2), "INTEGRATED_INTO")
+    # Resolve the simple follow-up form used in document chunks: "It
+    # integrates with OpenAI."  The immediately preceding created/developed
+    # target is the framework/product referred to by "It".
+    antecedent = rels[0]["target"] if rels else ""
+    for m in re.finditer(r"\bIt\s+(?:integrates?\s+with|is\s+integrated\s+into)\s+" + CAP, text):
+        if antecedent:
+            add_rel(rels, antecedent, m.group(1), "INTEGRATED_INTO")
     for m in re.finditer(CAP + r"\s+hired\s+" + CAP, text): add_rel(rels,m.group(1),m.group(2),"HIRED")
     names=[]
     for rel in rels:
         for name in (rel['source'],rel['target']):
             if name not in names: names.append(name)
     for name in re.findall(CAP, text):
-        if name not in names and name.lower() not in {'the','this','a','an'}: names.append(name)
+        if name not in names and name.lower() not in {'the','this','it','a','an'}: names.append(name)
     return {"entities":[{"name":n,"type":entity_type(n,text)} for n in names],"relationships":rels}
 
 def graph_parts(graph: dict[str,Any]):
