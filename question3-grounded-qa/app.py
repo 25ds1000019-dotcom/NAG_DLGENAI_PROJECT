@@ -38,7 +38,17 @@ def content_words(text: str) -> set[str]:
 
 
 def named_anchors(question: str) -> set[str]:
-    return {token.lower() for token in TOKEN_RE.findall(question) if len(token) >= 2 and token.lower() not in STOPWORDS and (token.isupper() or (token[0].isupper() and token[1:].islower()))}
+    # Preserve entity/product names, including mixed-case names such as
+    # ChromaDB or LangChain.  Without this, an answer can be incorrectly
+    # grounded in a different product's chunk merely because generic terms
+    # (for example "database" or "Rust") overlap.
+    return {
+        token.lower()
+        for token in TOKEN_RE.findall(question)
+        if len(token) >= 2
+        and token.lower() not in STOPWORDS
+        and any(character.isupper() for character in token)
+    }
 
 
 def unknown() -> dict[str, Any]:
