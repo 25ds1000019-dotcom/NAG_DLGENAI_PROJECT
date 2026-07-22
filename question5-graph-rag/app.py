@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 app = FastAPI(title="GraphMind GraphRAG")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["POST", "OPTIONS"], allow_headers=["*"])
 
-CAP = r"([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)*)"
+CAP = r"([A-Z][A-Za-z0-9-]*(?:\s+[A-Z][A-Za-z0-9-]*)*)"
 VERBS = {"CREATED": "created", "FOUNDED": "founded", "DEVELOPED": "developed", "INTEGRATED_INTO": "integrates with", "HIRED": "hired", "AUTHORED": "authored"}
 
 class ExtractRequest(BaseModel):
@@ -26,7 +26,7 @@ class CommunityRequest(BaseModel):
 
 def entity_type(name: str, text: str) -> str:
     low, around = name.lower(), text.lower()
-    if low in {"langchain", "llamaindex", "haystack", "react", "django", "pytorch", "tensorflow"} or re.search(re.escape(name.lower()) + r"\s+(?:is|was)\s+(?:an?\s+)?framework", around): return "Framework"
+    if low in {"langchain", "llamaindex", "haystack", "react", "django", "pytorch", "tensorflow"} or re.search(re.escape(name.lower()) + r".{0,80}\bframework\b", around): return "Framework"
     if low in {"openai", "google", "microsoft", "meta", "anthropic", "apple", "amazon"} or any(x in name for x in ("Inc", "Corp", "Labs", "AI")): return "Organization"
     if re.search(r"(?:by|founded by|created by|developed by|hired)\s+" + re.escape(name), text, re.I): return "Person"
     if " " in name and not any(x in name for x in ("OpenAI", "Google", "Microsoft")): return "Person"
@@ -64,6 +64,15 @@ def extract_graph(req: ExtractRequest) -> dict[str, list[dict[str,str]]]:
         if antecedent:
             add_rel(rels, antecedent, m.group(1), "INTEGRATED_INTO")
     for m in re.finditer(CAP + r"\s+hired\s+" + CAP, text): add_rel(rels,m.group(1),m.group(2),"HIRED")
+    # Natural document prose often includes descriptors between an entity and
+    # its relation ("an open-source framework developed by …").
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        m = re.search(CAP + r".{0,180}?\b(created|founded|developed|authored)\s+by\s+" + CAP, sentence)
+        if m:
+            verb=m.group(2).lower(); rel={"founded":"FOUNDED","developed":"DEVELOPED","authored":"AUTHORED"}.get(verb,"CREATED")
+            add_rel(rels,m.group(3),m.group(1),rel)
+        m = re.search(CAP + r".{0,180}?\b(integrates?\s+with|works?\s+with|uses|is\s+integrated\s+into|integrated\s+into)\s+" + CAP, sentence)
+        if m: add_rel(rels,m.group(1),m.group(3),"INTEGRATED_INTO")
     names=[]
     for rel in rels:
         for name in (rel['source'],rel['target']):
